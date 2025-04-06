@@ -1,0 +1,117 @@
+---
+- name: Create non-root users with sudo privileges
+  block:
+    - name: Ensure sudo binary has correct permissions
+      file:
+        path: /usr/bin/sudo
+        owner: root
+        group: root
+        mode: '04755'  # Setuid bit + rwx for owner, rx for others
+      become: true
+
+    - name: Ensure sudoers file has correct permissions
+      file:
+        path: /etc/sudoers
+        owner: root
+        group: root
+        mode: '0440'
+      become: true
+
+    - name: Create sudoers.d directory if it doesn't exist
+      file:
+        path: /etc/sudoers.d
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      become: true
+
+    - name: Set username based on inventory hostname
+      set_fact:
+        nonroot_username: "{{ inventory_hostname }}"
+
+    - name: Check if user exists
+      getent:
+        database: passwd
+        key: "{{ nonroot_username }}"
+      register: user_exists
+      ignore_errors: true
+      
+    - name: Create non-root user
+      user:
+        name: "{{ nonroot_username }}"
+        shell: /bin/bash
+        groups: sudo
+        append: yes
+        state: present
+        create_home: yes
+      when: user_exists is failed
+      become: true
+
+    # Register a fact to track if we created the user or if it already existed
+    - name: Check if user now exists after create attempt
+      getent:
+        database: passwd
+        key: "{{ nonroot_username }}"
+      register: user_exists_now
+      ignore_errors: true
+
+    - name: Set up sudo privileges without password for user
+      lineinfile:
+        path: "/etc/sudoers.d/{{ nonroot_username }}"
+        line: "{{ nonroot_username }} ALL=(ALL) NOPASSWD: ALL"
+        state: present
+        mode: '0440'
+        create: yes
+        owner: root
+        group: root
+        validate: 'visudo -cf %s'
+      when: not user_exists_now.failed
+      become: true
+
+    - name: Create home directory if it doesn't exist
+      file:
+        path: "/home/{{ nonroot_username }}"
+        state: directory
+        mode: '0750'
+      when: not user_exists_now.failed
+      become: true
+
+    - name: Set correct permissions on home directory
+      file:
+        path: "/home/{{ nonroot_username }}"
+        state: directory
+        owner: "{{ nonroot_username }}"
+        group: "{{ nonroot_username }}"
+        mode: '0750'
+      when: not user_exists_now.failed
+      become: true
+
+    - name: Create .ssh directory for user
+      file:
+        path: "/home/{{ nonroot_username }}/.ssh"
+        state: directory
+        owner: "{{ nonroot_username }}"
+        group: "{{ nonroot_username }}"
+        mode: '0700'
+      when: not user_exists_now.failed
+      become: true
+
+    - name: Copy SSH authorized_keys from root if it exists
+      command: "cp -f /root/.ssh/authorized_keys /home/{{ nonroot_username }}/.ssh/authorized_keys"
+      args:
+        creates: "/home/{{ nonroot_username }}/.ssh/authorized_keys"
+      when: not user_exists_now.failed
+      become: true
+      ignore_errors: yes
+      register: copy_result
+
+    - name: Set proper ownership and permissions on authorized_keys
+      file:
+        path: "/home/{{ nonroot_username }}/.ssh/authorized_keys"
+        state: file
+        owner: "{{ nonroot_username }}"
+        group: "{{ nonroot_username }}"
+        mode: '0600'
+      when: not user_exists_now.failed and not copy_result.failed and copy_result.rc is defined and copy_result.rc == 0
+      become: true
