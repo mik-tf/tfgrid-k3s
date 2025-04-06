@@ -1,4 +1,4 @@
-.PHONY: deploy clean wireguard dns ping help
+.PHONY: deploy clean wireguard dns ping help permissions
 
 # Default target
 all: deploy
@@ -23,6 +23,12 @@ dns:
 ping:
 	cd scripts && bash ping.sh
 
+# Check cluster permissions
+permissions:
+	@echo "Checking cluster permissions..."
+	@chmod +x scripts/cluster_permissions.sh
+	@./scripts/cluster_permissions.sh
+
 # Help information
 help:
 	@echo "TFGrid K3s Makefile Targets:"
@@ -32,3 +38,4 @@ help:
 	@echo "  make wireguard - Set up the WireGuard connection"
 	@echo "  make dns     - Configure DNS settings"
 	@echo "  make ping    - Ping nodes to check connectivity"
+	@echo "  make permissions - Check cluster permissions"
