@@ -1,5 +1,11 @@
 # platform/roles/management/tasks/main.yml
 ---
+- name: Fix TFGrid resolv.conf issue
+  shell: |
+    rm -f /etc/resolv.conf
+    ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  become: true
+
 - name: Install required packages for management node
   ansible.builtin.apt:
     name:

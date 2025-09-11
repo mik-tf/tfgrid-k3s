@@ -59,3 +59,4 @@ help:
 	@echo "  make ping           - Ping nodes to check connectivity"
 	@echo "  make connect        - SSH into the management node"
 	@echo "  make permissions    - Check cluster permissions"
+	@echo "  make k9s            - Connect to management node and see K9s TUI"
