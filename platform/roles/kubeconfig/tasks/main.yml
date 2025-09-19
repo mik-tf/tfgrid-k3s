@@ -7,7 +7,8 @@
 
 - name: Get kubeconfig content directly via SSH from primary control plane node
   ansible.builtin.shell: >
-    ssh {{ hostvars[primary_control_node]['ansible_user'] | default('root') }}@{{ primary_control_ip }}
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10
+    {{ hostvars[primary_control_node]['ansible_user'] | default('root') }}@{{ primary_control_ip }}
     'cat /etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "KUBECONFIG_NOT_FOUND"'
   register: kubeconfig_ssh_result
   delegate_to: localhost # Run the SSH command from the Ansible controller

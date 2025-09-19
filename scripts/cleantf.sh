@@ -1,66 +1,99 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Don't exit on errors, instead continue and report issues
-set +e
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
 # Get script directory
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-DEPLOYMENT_DIR="$SCRIPT_DIR/../infrastructure"
+PROJECT_DIR="$SCRIPT_DIR/.."
+INFRASTRUCTURE_DIR="$PROJECT_DIR/infrastructure"
+PLATFORM_DIR="$PROJECT_DIR/platform"
 
-echo "Cleaning Terraform/OpenTofu state and related files..."
+echo -e "${GREEN}Cleaning up TFGrid K3s deployment${NC}"
+echo "=================================="
 
-# Define files and directories to clean
-TO_REMOVE=(
-  ".terraform"
-  ".terraform.lock.hcl"
-  "terraform.tfstate"
-  "terraform.tfstate.backup"
-  "*.tfstate.*"
-  "crash.log"
-  "state.json"
+# Check if tofu/terraform is available
+if command -v tofu &> /dev/null; then
+    TERRAFORM_CMD="tofu"
+elif command -v terraform &> /dev/null; then
+    TERRAFORM_CMD="terraform"
+else
+    echo -e "${YELLOW}WARNING: Neither tofu nor terraform found. Skipping infrastructure destruction.${NC}"
+    TERRAFORM_CMD=""
+fi
+
+if [[ -n "$TERRAFORM_CMD" ]]; then
+    echo -e "${YELLOW}Destroying infrastructure with $TERRAFORM_CMD...${NC}"
+    cd "$INFRASTRUCTURE_DIR"
+    if $TERRAFORM_CMD destroy -auto-approve 2>/dev/null; then
+        echo -e "${GREEN}✓ Infrastructure destroyed successfully${NC}"
+    else
+        echo -e "${YELLOW}⚠ Infrastructure destruction failed or no resources to destroy${NC}"
+    fi
+    cd "$PROJECT_DIR"
+fi
+
+echo -e "${YELLOW}Removing Terraform and Ansible generated files...${NC}"
+
+# Remove Terraform state files and Ansible generated files
+FILES_TO_REMOVE=(
+    "$INFRASTRUCTURE_DIR/terraform.tfstate"
+    "$INFRASTRUCTURE_DIR/terraform.tfstate.backup"
+    "$INFRASTRUCTURE_DIR/state.json"
+    "$INFRASTRUCTURE_DIR/crash.log"
+    "$INFRASTRUCTURE_DIR/.terraform.lock.hcl"
+    "$PLATFORM_DIR/inventory.ini"
 )
 
-# Check deployment directory exists
-if [ ! -d "$DEPLOYMENT_DIR" ]; then
-  echo "Warning: Deployment directory not found at $DEPLOYMENT_DIR"
-  # Create it so we can continue
-  mkdir -p "$DEPLOYMENT_DIR" || { echo "Failed to create directory. Exiting."; exit 1; }
-fi
-
-# Change to deployment directory
-cd "$DEPLOYMENT_DIR" || { echo "Failed to change to $DEPLOYMENT_DIR. Exiting."; exit 1; }
-
-# Run tofu destroy with timeout to prevent hanging
-echo "Running 'tofu destroy' (with 5-minute timeout)..."
-timeout 300 tofu destroy -auto-approve >/dev/null 2>&1 || {
-  echo "Note: 'tofu destroy' command exited with non-zero status. Continuing with cleanup..."
-}
-
-# Remove files and directories with feedback
-echo "Removing Terraform/OpenTofu files and directories..."
-for item in "${TO_REMOVE[@]}"; do
-  echo "  Finding and removing: $item"
-  # Use -depth to process contents before directory itself
-  find . -name "$item" -depth -print -exec rm -rf {} \; 2>/dev/null || true
-  echo "  Done."
+for file in "${FILES_TO_REMOVE[@]}"; do
+    if [[ -f "$file" ]]; then
+        rm -f "$file"
+        echo -e "${GREEN}✓ Removed $file${NC}"
+    fi
 done
 
-# Check and bring down wireguard if it exists
-if [ -f "/etc/wireguard/k3s.conf" ]; then
-  echo "Bringing down WireGuard interface..."
-  # Add timeout to prevent hanging
-  timeout 30 sudo wg-quick down k3s 2>/dev/null || {
-    echo "Note: Failed to bring down WireGuard with wg-quick. Trying alternative method..."
-    sudo ip link delete k3s 2>/dev/null || true
-  }
-  sudo rm -f /etc/wireguard/k3s.conf 2>/dev/null || echo "Warning: Could not remove WireGuard config file."
+# Remove .terraform directory
+if [[ -d "$INFRASTRUCTURE_DIR/.terraform" ]]; then
+    rm -rf "$INFRASTRUCTURE_DIR/.terraform"
+    echo -e "${GREEN}✓ Removed $INFRASTRUCTURE_DIR/.terraform directory${NC}"
 fi
 
-# Remove inventory file
-INVENTORY_PATH="$SCRIPT_DIR/../platform/inventory.ini"
-if [ -f "$INVENTORY_PATH" ]; then
-  echo "Removing Ansible inventory..."
-  rm -f "$INVENTORY_PATH" 2>/dev/null || echo "Warning: Could not remove Ansible inventory file."
+# Remove any .tfstate.* files
+TFSTATE_FILES=$(find "$INFRASTRUCTURE_DIR" -name "*.tfstate.*" 2>/dev/null)
+if [[ -n "$TFSTATE_FILES" ]]; then
+    echo "$TFSTATE_FILES" | while read -r file; do
+        rm -f "$file"
+        echo -e "${GREEN}✓ Removed $file${NC}"
+    done
 fi
 
-echo "Cleanup completed successfully!"
+# Check and bring down WireGuard if it exists
+if [[ -f "/etc/wireguard/k3s.conf" ]]; then
+    echo -e "${YELLOW}Bringing down WireGuard interface...${NC}"
+    if sudo wg-quick down k3s 2>/dev/null; then
+        echo -e "${GREEN}✓ WireGuard interface brought down successfully${NC}"
+    else
+        echo -e "${YELLOW}⚠ Failed to bring down WireGuard with wg-quick. Trying alternative method...${NC}"
+        if sudo ip link delete k3s 2>/dev/null; then
+            echo -e "${GREEN}✓ WireGuard interface removed via ip link${NC}"
+        else
+            echo -e "${YELLOW}⚠ Could not remove WireGuard interface${NC}"
+        fi
+    fi
+    if sudo rm -f /etc/wireguard/k3s.conf 2>/dev/null; then
+        echo -e "${GREEN}✓ Removed WireGuard config file${NC}"
+    else
+        echo -e "${YELLOW}⚠ Could not remove WireGuard config file${NC}"
+    fi
+fi
+
+echo ""
+echo -e "${GREEN}Cleanup completed successfully!${NC}"
+echo ""
+echo -e "${YELLOW}Note: This only removes local files and destroys cloud resources.${NC}"
+echo -e "${YELLOW}Your source code and configuration files are preserved.${NC}"

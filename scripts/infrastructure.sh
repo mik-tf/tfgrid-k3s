@@ -39,21 +39,12 @@ if ! tofu apply -auto-approve; then
   exit 1
 fi
 
-# --- WireGuard Setup ---
-echo "=== Setting up WireGuard connection ==="
-bash "${SCRIPT_DIR}/wg.sh"
-
-# --- Generate Ansible Inventory ---
-echo "=== Generating Ansible inventory ==="
-bash "${SCRIPT_DIR}/generate-inventory.sh"
-
-# --- Initial Connectivity Test ---
-echo "=== Testing connectivity to nodes ==="
-bash "${SCRIPT_DIR}/ping.sh"
-
 echo "=== Infrastructure deployment completed successfully! ==="
 echo ""
-echo "Management node has been assigned WireGuard IP 10.1.3.2"
+echo "ThreeFold Grid VMs have been deployed and are ready."
 echo ""
-echo "To continue with platform deployment:"
-echo "  make platform"
+echo "Next steps:"
+echo "  make inventory    # Generate Ansible inventory"
+echo "  make wg          # Setup WireGuard connection"
+echo "  make platform    # Deploy K3s cluster"
+echo "  make deploy      # Run complete deployment workflow"

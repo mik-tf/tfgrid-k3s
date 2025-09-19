@@ -62,6 +62,13 @@
   set_fact:
     is_primary_control: "{{ inventory_hostname == primary_control_node }}"
 
+- name: Detect IP family and set network configuration
+  set_fact:
+    ip_family: "{{ 'ipv6' if ':' in ansible_host else 'ipv4' }}"
+    cluster_cidr: "{{ '--cluster-cidr=\"10.42.0.0/16,2001:cafe:42:0::/56\"' if ':' in ansible_host else '' }}"
+    service_cidr: "{{ '--service-cidr=\"10.43.0.0/16,2001:cafe:43:0::/112\"' if ':' in ansible_host else '' }}"
+    metallb_mask: "{{ '/128' if ':' in ansible_host else '/32' }}"
+
 # Primary control node installation
 - name: Install K3s on primary control node
   block:
@@ -100,6 +107,8 @@
         --disable servicelb
         --flannel-backend vxlan
         --snapshotter=native
+        {{ cluster_cidr }}
+        {{ service_cidr }}
       args:
         creates: /usr/local/bin/k3s
       environment:
@@ -191,6 +200,8 @@
         --disable servicelb
         --flannel-backend vxlan
         --snapshotter=native
+        {{ cluster_cidr }}
+        {{ service_cidr }}
       args:
         creates: /usr/local/bin/k3s
       environment:
@@ -345,7 +356,7 @@
             namespace: metallb-system
           spec:
             addresses:
-            - {{ ansible_host }}/32
+            - {{ ansible_host }}{{ metallb_mask }}
           ---
           apiVersion: metallb.io/v1beta1
           kind: L2Advertisement
@@ -362,11 +373,30 @@
       register: metallb_config
       changed_when: "'created' in metallb_config.stdout or 'configured' in metallb_config.stdout"
 
-    - name: Deploy Nginx Ingress Controller
-      shell: |
-        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
+    - name: Download Nginx Ingress Controller manifest
+      get_url:
+        url: https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
+        dest: /tmp/nginx-ingress.yaml
+      when: ip_family == 'ipv6'
+
+    - name: Modify Nginx manifest for IPv6
+      replace:
+        path: /tmp/nginx-ingress.yaml
+        regexp: 'ipFamilies:\s*\["IPv4"\]'
+        replace: 'ipFamilies: ["IPv6"]'
+      when: ip_family == 'ipv6'
+
+    - name: Deploy Nginx Ingress Controller (IPv4)
+      shell: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
       register: nginx_deploy
       changed_when: "'created' in nginx_deploy.stdout or 'configured' in nginx_deploy.stdout"
+      when: ip_family == 'ipv4'
+
+    - name: Deploy Nginx Ingress Controller (IPv6)
+      shell: kubectl apply -f /tmp/nginx-ingress.yaml
+      register: nginx_deploy_ipv6
+      changed_when: "'created' in nginx_deploy_ipv6.stdout or 'configured' in nginx_deploy_ipv6.stdout"
+      when: ip_family == 'ipv6'
 
     - name: Wait for Nginx Ingress Controller to be ready
       shell: |

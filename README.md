@@ -28,6 +28,38 @@ The deployment consists of:
 
 The management node lives within the same private network as your cluster nodes, providing secure management without exposing your cluster to the public internet.
 
+## Kubernetes Components
+
+The K3s cluster is deployed with the following components for full functionality:
+
+### Core Components
+- **K3s**: Lightweight Kubernetes distribution with built-in components disabled (Traefik, ServiceLB)
+- **Flannel**: CNI plugin for pod networking using VXLAN backend
+
+### Load Balancing & Ingress
+- **MetalLB**: Load balancer for Kubernetes services, providing external IP addresses
+- **Nginx Ingress Controller**: Ingress controller for routing external traffic to services
+
+### Networking Configuration
+
+The cluster automatically adapts its networking based on your `MAIN_NETWORK` setting:
+
+#### WireGuard Network (IPv4)
+- **K3s Configuration**: Standard IPv4 networking
+- **MetalLB**: Configures IPv4 address pools (`/32` subnets)
+- **Nginx Ingress**: Uses IPv4-compatible deployment manifest
+- **IP Addresses**: 10.x.x.x range for cluster communication
+
+#### Mycelium Network (IPv6)
+- **K3s Configuration**: Dual-stack IPv4/IPv6 networking enabled
+- **MetalLB**: Configures IPv6 address pools (`/128` subnets)
+- **Nginx Ingress**: Modified deployment manifest with IPv6 support
+- **IP Addresses**: IPv6 addresses for cluster communication
+
+This ensures Nginx and all cluster services work correctly regardless of your chosen network type.
+
+> Note: The code is tested and fully functional with WireGuard. There might be issues with Mycelium until it is fully tested. This documentation will be updated when this happens.
+
 ## Prerequisites
 
 - Linux/macOS system with bash
@@ -63,17 +95,33 @@ The management node lives within the same private network as your cluster nodes,
 
 3. Deploy the cluster:
 
+    ```bash
+    # Complete deployment (infrastructure, platform, applications)
+    make deploy
+
+    # Or deploy step by step:
+    make infrastructure   # Deploy ThreeFold Grid VMs
+    make inventory        # Generate Ansible inventory
+    make wg               # Setup WireGuard connection
+    make platform         # Configure K3s on the infrastructure
+    make app              # Deploy applications on the K3s cluster
+
+    # Quick redeployment (assumes infrastructure exists)
+    make quick
+    ```
+
+    > **Tip**: Run `make help` to see all available commands
+
+3. Configure network connectivity (optional):
    ```bash
-   # Deploy everything in one go (infrastructure, platform, applications)
-   make
+   # Copy environment configuration
+   cp .env.example .env
 
-   # Or deploy step by step:
-   make infrastructure   # Deploy ThreeFold Grid VMs
-   make platform         # Configure K3s on the infrastructure
-   make app              # Deploy applications on the K3s cluster
+   # Choose network for Ansible connectivity (wireguard or mycelium)
+   # Edit .env file to set MAIN_NETWORK=wireguard or MAIN_NETWORK=mycelium
+   # This setting also affects make connect, make ping, and make k9s commands
+   nano .env
    ```
-
-   > **Tip**: Run `make help` to see all available make commands
 
 4. After deployment, for security, unset the sensitive environment variable:
    ```bash
@@ -96,6 +144,7 @@ Runs `scripts/infrastructure.sh`, which:
 ### 2. Platform Deployment (`make platform`)
 
 Runs `scripts/platform.sh`, which:
+- **Automatically waits for SSH availability** on all nodes before proceeding (eliminates timing issues)
 - Configures the management node with required tools (Ansible, kubectl, Helm)
 - Deploys the K3s control plane on the `k3s_control` nodes
 - Joins worker nodes to the cluster
@@ -114,13 +163,13 @@ The management node is your central location for all cluster operations. After d
 ### Connecting to the Management Node
 
 ```bash
-# Connect to the management node
+# Connect to the management node (uses network configured in .env)
 make connect
 
 # Or directly:
 ssh root@<management-node-ip>
 
-# Connect to the management node and launch K9s TUI directly
+# Connect to the management node and launch K9s TUI directly (uses configured network)
 make k9s
 ```
 
@@ -157,15 +206,34 @@ The management node has all necessary tools pre-installed:
 ## Additional Management Commands
 
 ```bash
-# Check connectivity to all nodes
+# Show cluster node addresses and access information
+make address
+
+# Check connectivity to all nodes (uses configured network)
 make ping
+
+# Check SSH readiness of all cluster nodes
+make ready
+
+# Connect to the management node (uses configured network)
+make connect
+
+# Connect to management node and launch K9s TUI (uses configured network)
+make k9s
 
 # Verify cluster permissions
 make permissions
 
+# Configure DNS settings
+make dns
+
 # Clean up deployment resources
 make clean
 ```
+
+**Note**: `make connect`, `make ping`, and `make k9s` automatically use the network configured in your `.env` file (`MAIN_NETWORK` setting).
+
+Run `make help` for a complete list of available commands.
 
 ## Project Structure
 
@@ -224,6 +292,55 @@ worker_cpu = 8
 worker_mem = 16384   # 16GB RAM
 worker_disk = 250    # 250GB storage
 ```
+
+## Network Configuration
+
+The deployment supports two network options for Ansible connectivity. Your choice affects not just connectivity, but also how the Kubernetes cluster components (K3s, MetalLB, Nginx) are configured:
+
+### WireGuard (Default, IPv4)
+- **Type**: Private overlay network
+- **IP Addresses**: IPv4 (10.x.x.x range)
+- **Security**: Encrypted VPN connections
+- **Use Case**: Most reliable for production deployments
+- **Cluster Impact**: Standard IPv4-only Kubernetes networking
+
+### Mycelium (IPv6)
+- **Type**: Decentralized IPv6 overlay network
+- **IP Addresses**: IPv6 addresses
+- **Security**: Built-in encryption
+- **Use Case**: Alternative when WireGuard has issues
+- **Cluster Impact**: Dual-stack IPv4/IPv6 Kubernetes networking with IPv6-optimized components
+
+### Switching Networks
+
+To change the network used for Ansible connectivity and management commands:
+
+1. Edit your `.env` file:
+    ```bash
+    # For WireGuard (default)
+    MAIN_NETWORK=wireguard
+
+    # For Mycelium
+    MAIN_NETWORK=mycelium
+    ```
+
+2. Regenerate the inventory:
+    ```bash
+    make inventory
+    ```
+
+3. Re-run the platform deployment:
+    ```bash
+    make platform
+    ```
+
+**Important**: After switching networks, all management commands automatically use the configured network:
+
+- `make connect` - Connects to management node via the configured network
+- `make ping` - Tests connectivity using the configured network's IPs
+- `make k9s` - Connects and launches K9s via the configured network
+
+Both networks are always available on all nodes, so you can switch between them if one has connectivity issues. The system will automatically configure K3s, MetalLB, and Nginx appropriately based on your `MAIN_NETWORK` setting.
 
 ## Maintenance and Updates
 
